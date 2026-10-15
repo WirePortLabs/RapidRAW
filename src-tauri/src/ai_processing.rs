@@ -71,7 +71,7 @@ const NORMAL_SHA256: &str = "24eacb5dc7a2c54c7bc98f7de085ffbed79ad006ea5b664c2c2
 // avoid spawning a large worker pool on high-core-count machines. Users can
 // still benchmark this policy on target hardware before changing the cap.
 fn depth_intra_op_threads_for(logical_cores: usize) -> usize {
-    logical_cores.saturating_sub(1).max(1).min(8)
+    logical_cores.saturating_sub(1).clamp(1, 8)
 }
 
 fn depth_intra_op_threads() -> usize {
