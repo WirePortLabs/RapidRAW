@@ -39,6 +39,9 @@ Sources:
 | DA3-LARGE | 350M | CC BY-NC 4.0 | Same exporter supports the model name; exact target artifact/runtime validation is still required. | Do not ship as a default: non-commercial license is a major distribution constraint and model is substantially larger. |
 | Current DA2 ViT-S | Parameter count not asserted in this repository file; model file is 99,373,606 bytes. | Preserve existing model's license/provenance review. | Already loaded by current ORT integration. | Baseline and rollback target. |
 
+
+**Export-contract caveat:** the reference export README gives a simplified tensor example in the [0, 1] range, but its provided `run_onnx.py` path uses the DA3 `InputProcessor`, whose source applies ImageNet mean/std normalization. Treat this as a contract discrepancy to resolve with a pinned export and fixture-based smoke test; do not infer the Rust input range from the README example alone.
+
 There is no verified cross-platform GPU inference number yet. ONNX export is not proof that every operator runs on every packaged ORT provider. CPU-only is the required baseline; CUDA, DirectML, CoreML, or other acceleration should be measured only where that provider is installed and available.
 
 ## Migration plan (do after artifact approval)
