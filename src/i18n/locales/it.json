@@ -1925,6 +1925,13 @@
         "tonemapperOverride": "Sovrascrittura Tonemapper Globale",
         "tonemapperOverrideDesc": "Forza un tonemapper specifico globalmente per tutte le immagini, nascondendo il selettore del tonemapper dal pannello delle regolazioni."
       },
+      "depthInference": "Prestazioni della profondità IA locale",
+      "depthInferenceDesc": "Scegli come la maschera di profondità locale usa i thread della CPU. Automatico riserva un core e limita a 8 thread; Reattivo ne usa al massimo 2; Prestazioni fino a 16. La modifica si applica al prossimo caricamento del modello. Funziona anche solo con CPU.",
+      "depthInferenceModes": {
+        "auto": "Automatico (consigliato)",
+        "responsive": "Mantieni il sistema reattivo",
+        "performance": "Massime prestazioni CPU"
+      },
       "previewRes": "Risoluzione Anteprima",
       "previewResDesc": "Determina la risoluzione massima dell'anteprima. Valori inferiori migliorano notevolmente le prestazioni.",
       "previewStrategy": "Strategia Rendering Anteprima",
