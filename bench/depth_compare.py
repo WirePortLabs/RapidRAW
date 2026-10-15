@@ -239,7 +239,8 @@ def open_session(
         provider_spec: list[Any] = [candidate]
         if candidate == "OpenVINOExecutionProvider":
             provider_spec = [(candidate, {"device_type": "AUTO"})]
-        provider_spec.append("CPUExecutionProvider") if candidate != "CPUExecutionProvider" else None
+        if candidate != "CPUExecutionProvider":
+            provider_spec.append("CPUExecutionProvider")
         candidate_options = options
         if candidate == "DmlExecutionProvider":
             # DirectML requires sequential execution and disabled memory-pattern allocation.
