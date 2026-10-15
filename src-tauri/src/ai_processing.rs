@@ -1621,10 +1621,8 @@ pub fn run_sky_seg_model(
         }
     }
 
-    // input_tensor was allocated in standard NCHW layout and filled through
-    // as_slice_mut(), so move its allocation directly into ORT instead of making
-    // another full-size owned copy through as_standard_layout().into_owned().
-    let t_input = Tensor::from_array(input_tensor.into_dyn())?;
+    let input_tensor_dyn = input_tensor.into_dyn();
+    let t_input = Tensor::from_array(input_tensor_dyn.as_standard_layout().into_owned())?;
 
     let mut session = sky_seg_session.lock().unwrap();
     let outputs = session.run(ort::inputs![t_input])?;
@@ -1791,8 +1789,9 @@ pub fn run_depth_anything_model(
         }
     }
 
-    let input_tensor_dyn = input_tensor.into_dyn();
-    let t_input = Tensor::from_array(input_tensor_dyn.as_standard_layout().into_owned())?;
+    // The Array was allocated as contiguous NCHW and filled via its flat slice.
+    // Move the allocation into ORT, avoiding another full tensor copy.
+    let t_input = Tensor::from_array(input_tensor.into_dyn())?;
 
     let mut session = depth_session.lock().unwrap();
     let outputs = session.run(ort::inputs![t_input])?;
