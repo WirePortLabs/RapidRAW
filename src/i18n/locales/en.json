@@ -1887,6 +1887,13 @@
         "tonemapperOverride": "Global Tonemapper Override",
         "tonemapperOverrideDesc": "Force a specific tonemapper globally for all images, hiding the tonemapper switch from the adjustments panel."
       },
+      "depthInference": "Local AI Depth Performance",
+      "depthInferenceDesc": "Choose how local depth-mask inference uses CPU threads. Auto reserves a core and caps at 8 threads; Responsive uses at most 2; Performance uses up to 16. Applies the next time the depth model is loaded. CPU-only systems are supported.",
+      "depthInferenceModes": {
+        "auto": "Auto (Recommended)",
+        "responsive": "Keep system responsive",
+        "performance": "Maximum CPU performance"
+      },
       "previewRes": "Preview Resolution",
       "previewResDesc": "Determines the maximum resolution of the preview. Lower values significantly improve performance.",
       "previewStrategy": "Preview Rendering Strategy",
