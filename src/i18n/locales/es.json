@@ -1922,6 +1922,13 @@
         "tonemapperOverride": "Anulación global del mapeador de tonos",
         "tonemapperOverrideDesc": "Forzar un mapeador de tonos específico a nivel global para todas las imágenes, ocultando el interruptor del mapeador del panel de ajustes."
       },
+      "depthInference": "Rendimiento de profundidad con IA local",
+      "depthInferenceDesc": "Elige cómo usa los hilos de CPU la máscara de profundidad local. Automático reserva un núcleo y limita a 8 hilos; Ágil usa como máximo 2; Rendimiento puede usar hasta 16. Se aplica al volver a cargar el modelo de profundidad. También funciona solo con CPU.",
+      "depthInferenceModes": {
+        "auto": "Automático (recomendado)",
+        "responsive": "Mantener el sistema ágil",
+        "performance": "Máximo rendimiento de CPU"
+      },
       "previewRes": "Resolución de vista previa",
       "previewResDesc": "Determina la resolución máxima de la vista previa. Valores más bajos mejoran considerablemente el rendimiento.",
       "previewStrategy": "Estrategia de renderizado de la vista previa",
