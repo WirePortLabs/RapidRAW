@@ -186,65 +186,43 @@ pub async fn generate_ai_depth_mask(
         return Err("Task cancelled".to_string());
     }
 
-    let cached_depth = {
-        let mut ai_state_lock = state.ai_state.lock().unwrap();
-        let ai_state = ai_state_lock.as_mut().unwrap();
+    // A depth-only request must work before any other local AI model has been
+    // initialized. Read the one-entry cache without assuming AiState already exists.
+    let cached_depth = state
+        .ai_state
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|ai_state| ai_state.depth_map.as_ref())
+        .filter(|cached| cached.path_hash == path_hash)
+        .cloned();
 
-        if let Some(cached) = &ai_state.depth_map {
-            if cached.path_hash == path_hash {
-                cached.clone()
-            } else {
-                drop(ai_state_lock);
-                let warped_image = get_cached_full_warped_image(&state, &js_adjustments)?;
+    let cached_depth = if let Some(cached) = cached_depth {
+        cached
+    } else {
+        let warped_image = get_cached_full_warped_image(&state, &js_adjustments)?;
 
-                if cancel_flag.as_ref().is_some_and(|t| t.is_cancelled()) {
-                    return Err("Task cancelled".to_string());
-                }
-
-                let depth_model =
-                    get_or_init_depth_model(&app_handle, &state.ai_state, &state.ai_init_lock)
-                        .await
-                        .map_err(|e| e.to_string())?;
-                let depth_img = run_depth_anything_model(warped_image.as_ref(), &depth_model)
-                    .map_err(|e| e.to_string())?;
-
-                let new_cache = CachedDepthMap {
-                    path_hash: path_hash.clone(),
-                    depth_image: depth_img,
-                    original_size: (warped_image.width(), warped_image.height()),
-                };
-
-                let mut ai_state_lock = state.ai_state.lock().unwrap();
-                let ai_state = ai_state_lock.as_mut().unwrap();
-                ai_state.depth_map = Some(new_cache.clone());
-                new_cache
-            }
-        } else {
-            drop(ai_state_lock);
-            let warped_image = get_cached_full_warped_image(&state, &js_adjustments)?;
-
-            if cancel_flag.as_ref().is_some_and(|t| t.is_cancelled()) {
-                return Err("Task cancelled".to_string());
-            }
-
-            let depth_model =
-                get_or_init_depth_model(&app_handle, &state.ai_state, &state.ai_init_lock)
-                    .await
-                    .map_err(|e| e.to_string())?;
-            let depth_img = run_depth_anything_model(warped_image.as_ref(), &depth_model)
-                .map_err(|e| e.to_string())?;
-
-            let new_cache = CachedDepthMap {
-                path_hash: path_hash.clone(),
-                depth_image: depth_img,
-                original_size: (warped_image.width(), warped_image.height()),
-            };
-
-            let mut ai_state_lock = state.ai_state.lock().unwrap();
-            let ai_state = ai_state_lock.as_mut().unwrap();
-            ai_state.depth_map = Some(new_cache.clone());
-            new_cache
+        if cancel_flag.as_ref().is_some_and(|t| t.is_cancelled()) {
+            return Err("Task cancelled".to_string());
         }
+
+        let depth_model =
+            get_or_init_depth_model(&app_handle, &state.ai_state, &state.ai_init_lock)
+                .await
+                .map_err(|e| e.to_string())?;
+        let depth_img = run_depth_anything_model(warped_image.as_ref(), &depth_model)
+            .map_err(|e| e.to_string())?;
+
+        let new_cache = CachedDepthMap {
+            path_hash: path_hash.clone(),
+            depth_image: depth_img,
+            original_size: (warped_image.width(), warped_image.height()),
+        };
+
+        if let Some(ai_state) = state.ai_state.lock().unwrap().as_mut() {
+            ai_state.depth_map = Some(new_cache.clone());
+        }
+        new_cache
     };
 
     if cancel_flag.as_ref().is_some_and(|t| t.is_cancelled()) {
