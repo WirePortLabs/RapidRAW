@@ -131,6 +131,20 @@ After the export has passed dynamic-shape validation, benchmark these multiples 
 
 This is a proposed profile matrix, **not yet the app's automatic hardware policy**. Start with 504 and 392 for matched-photo comparisons. Ship automatic profile selection only after recording depth-mask quality and latency on representative old CPU-only, Intel iGPU, AMD iGPU/dGPU, and NVIDIA dGPU systems. Fixed-shape ONNX exports cannot switch these resolutions; the chosen model must support the intended dimensions, and all input dimensions must comply with DA3's patch-size requirements.
 
+### User-facing depth performance modes
+
+The Processing settings panel exposes `depthInferenceMode` with three persisted choices:
+
+| UI mode | CPU thread policy | Intended use |
+|---|---|---|
+| Auto (default) | `clamp(logical_cores - 1, 1, 8)` | General use; keeps some CPU capacity available for the editor. |
+| Keep system responsive | `clamp(logical_cores - 1, 1, 2)` | Older/lower-power CPUs or when editing while generating masks. |
+| Maximum CPU performance | `clamp(logical_cores, 1, 16)` | Users who prefer throughput and can tolerate greater CPU contention. |
+
+The UI setting is saved through the existing app-settings pipeline. The active depth session records which mode created it; the next depth inference recreates the session if the saved mode changed. Existing settings files without this new field resolve to Auto. The choice only changes CPU thread scheduling; it does **not** claim to switch on GPU providers that are not packaged in RapidRAW.
+
+The new option is translated in all 15 shipped locales. Four Rust unit tests cover core-count caps and mode normalization. They are present but could not be executed in this environment: Cargo is unavailable here and the repository reports no GitHub Actions run for this draft PR.
+
 ### What the current branch already optimizes
 
 - `get_or_init_depth_model` loads/verifies just the depth model for depth-mask work, rather than forcing download/session allocation for SAM, foreground, and sky models. The same shared initialization lock prevents duplicate concurrent model initialization.
