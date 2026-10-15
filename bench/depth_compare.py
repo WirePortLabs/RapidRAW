@@ -16,6 +16,7 @@ import gc
 import json
 import math
 import os
+import platform
 import statistics
 import sys
 import threading
@@ -196,6 +197,73 @@ def validate_input_shape(session: ort.InferenceSession, tensor: np.ndarray, mode
             )
 
 
+def provider_candidates(requested: str, available: list[str]) -> list[str]:
+    """Return an ordered provider preference list; CPU is always the final fallback."""
+    if requested != "auto":
+        if requested not in available:
+            raise RuntimeError(f"Requested provider {requested!r} is unavailable. Available: {available}")
+        candidates = [requested]
+    elif sys.platform == "win32":
+        candidates = [
+            "TensorrtExecutionProvider",
+            "CUDAExecutionProvider",
+            "DmlExecutionProvider",
+            "OpenVINOExecutionProvider",
+            "WebGPUExecutionProvider",
+        ]
+    elif sys.platform == "darwin":
+        candidates = ["CoreMLExecutionProvider", "WebGPUExecutionProvider"]
+    else:
+        candidates = [
+            "TensorrtExecutionProvider",
+            "CUDAExecutionProvider",
+            "MIGraphXExecutionProvider",
+            "ROCMExecutionProvider",
+            "OpenVINOExecutionProvider",
+            "WebGPUExecutionProvider",
+        ]
+    return [name for name in candidates if name in available] + (
+        ["CPUExecutionProvider"] if "CPUExecutionProvider" in available else []
+    )
+
+
+def open_session(
+    model_path: Path,
+    options: ort.SessionOptions,
+    requested_provider: str,
+    available: list[str],
+) -> tuple[ort.InferenceSession, str, list[dict[str, str]]]:
+    attempts: list[dict[str, str]] = []
+    for candidate in provider_candidates(requested_provider, available):
+        # OpenVINO's AUTO policy can choose Intel CPU/GPU/NPU where available.
+        provider_spec: list[Any] = [candidate]
+        if candidate == "OpenVINOExecutionProvider":
+            provider_spec = [(candidate, {"device_type": "AUTO"})]
+        provider_spec.append("CPUExecutionProvider") if candidate != "CPUExecutionProvider" else None
+        candidate_options = options
+        if candidate == "DmlExecutionProvider":
+            # DirectML requires sequential execution and disabled memory-pattern allocation.
+            candidate_options = ort.SessionOptions()
+            candidate_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            candidate_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+            candidate_options.enable_mem_pattern = False
+            candidate_options.intra_op_num_threads = options.intra_op_num_threads
+        try:
+            session = ort.InferenceSession(
+                str(model_path), sess_options=candidate_options, providers=provider_spec
+            )
+            actual = session.get_providers()
+            if candidate != "CPUExecutionProvider" and candidate not in actual:
+                attempts.append({"provider": candidate, "result": f"not registered; actual={actual}"})
+                del session
+                continue
+            attempts.append({"provider": candidate, "result": f"session created; actual={actual}"})
+            return session, candidate, attempts
+        except Exception as exc:
+            attempts.append({"provider": candidate, "result": f"failed: {exc}"})
+    raise RuntimeError(f"No ONNX Runtime provider could load the model. Attempts: {attempts}")
+
+
 def benchmark_one(
     model_path: Path,
     mode: str,
@@ -207,6 +275,7 @@ def benchmark_one(
     resolution: int,
     invert_preview: bool,
     gpu_index: int,
+    intra_threads: int,
 ) -> dict[str, Any]:
     if not model_path.is_file():
         raise FileNotFoundError(f"Model does not exist: {model_path}")
@@ -215,15 +284,17 @@ def benchmark_one(
 
     options = ort.SessionOptions()
     options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    options.intra_op_num_threads = intra_threads
+    options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
     available = ort.get_available_providers()
-    if provider not in available:
-        raise RuntimeError(f"Requested provider {provider!r} is unavailable. Available: {available}")
 
     proc = psutil.Process(os.getpid())
     rss_before = proc.memory_info().rss
     load_started = time.perf_counter()
     with MemorySampler(gpu_index) as memory:
-        session = ort.InferenceSession(str(model_path), sess_options=options, providers=[provider])
+        session, selected_provider, provider_attempts = open_session(
+            model_path, options, provider, available
+        )
         load_ms = (time.perf_counter() - load_started) * 1000
         rss_after_load = proc.memory_info().rss
         input_meta = session.get_inputs()[0]
@@ -271,7 +342,11 @@ def benchmark_one(
         "modelPath": str(model_path.resolve()),
         "modelBytes": model_path.stat().st_size,
         "mode": mode,
-        "provider": provider,
+        "providerRequested": provider,
+        "providerSelected": selected_provider,
+        "providerAttempts": provider_attempts,
+        "activeSessionProviders": session.get_providers(),
+        "intraOpThreads": intra_threads,
         "onnxruntimeVersion": ort.__version__,
         "availableProviders": available,
         "inputName": input_meta.name,
@@ -303,7 +378,8 @@ def main() -> int:
     parser.add_argument("--v2-model", type=Path, required=True, help="RapidRAW Depth Anything V2 ONNX model")
     parser.add_argument("--da3-model", type=Path, required=True, help="Validated DA3-SMALL ONNX model")
     parser.add_argument("--images", type=Path, required=True, help="One image or directory tree of representative images")
-    parser.add_argument("--provider", default="CPUExecutionProvider", help="One installed ONNX Runtime provider (default: CPUExecutionProvider)")
+    parser.add_argument("--provider", default="auto", help="Provider preference: auto, or an exact installed provider name; CPU is always retained as fallback (default: auto)")
+    parser.add_argument("--intra-threads", type=int, default=0, help="ONNX intra-op CPU threads; 0 chooses min(logical CPUs minus one, 8), bounded to at least 1")
     parser.add_argument("--runs", type=int, default=10, help="Measured inference runs per image")
     parser.add_argument("--warmups", type=int, default=2, help="Discarded warmup runs per image")
     parser.add_argument("--da3-resolution", type=int, default=504, help="DA3 upper-bound resize target (normally 504)")
@@ -320,14 +396,27 @@ def main() -> int:
     if args.da3_resolution < 14:
         parser.error("--da3-resolution must be >= 14")
 
+    available_providers = ort.get_available_providers()
+    logical_cpus = psutil.cpu_count(logical=True) or 1
+    intra_threads = args.intra_threads if args.intra_threads > 0 else max(1, min(8, logical_cpus - 1))
+    if args.intra_threads < 0:
+        parser.error("--intra-threads must be 0 (auto) or a positive integer")
+
     args.output_dir.mkdir(parents=True, exist_ok=True)
     report: dict[str, Any] = {
         "schemaVersion": 1,
         "createdAtLocal": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "platform": sys.platform,
+        "platformRelease": platform.platform(),
+        "machineArchitecture": platform.machine(),
+        "cpuDescription": platform.processor() or platform.uname().processor or "not reported by Python",
+        "logicalCpuCount": logical_cpus,
+        "systemRamMB": round(psutil.virtual_memory().total / 1024**2, 2),
         "pythonVersion": sys.version,
         "pid": os.getpid(),
         "providerRequested": args.provider,
+        "availableProviders": available_providers,
+        "intraOpThreads": intra_threads,
         "imageCount": len(images),
         "images": [str(p.resolve()) for p in images],
         "notes": [
@@ -336,7 +425,12 @@ def main() -> int:
             "DA3 preprocessing follows the reference aspect-preserving and multiple-of-14 path.",
             "Previews use robust percentile normalization and are not numerical depth ground truth.",
             "Session-load time is not whole-app startup time.",
-            "GPU memory is sampled only when NVIDIA per-process reporting is available.",
+            "Auto provider selection tries available accelerators in platform-preferred order and always retains CPU as fallback.",
+            "A registered provider does not prove every graph node ran there; use ORT profiling on each target machine to confirm placement.",
+            "DirectML is configured for sequential execution with memory-pattern allocation disabled.",
+            "OpenVINO is requested with device_type=AUTO so compatible Intel systems may select CPU/GPU/NPU.",
+            "Thread cap reserves one logical CPU up to a maximum of 8; compare explicit --intra-threads values for a particular machine.",
+            "GPU memory is sampled only when NVIDIA per-process reporting is available; iGPU shared-memory accounting is platform-dependent.",
         ],
     }
     report["models"] = []
@@ -354,6 +448,7 @@ def main() -> int:
                 resolution=args.da3_resolution,
                 invert_preview=args.invert_previews,
                 gpu_index=args.gpu_index,
+                intra_threads=intra_threads,
             )
             report["models"].append(model_report)
         except Exception as exc:
