@@ -14,7 +14,6 @@ from __future__ import annotations
 import argparse
 import gc
 import json
-import math
 import os
 import platform
 import statistics
@@ -205,22 +204,17 @@ def provider_candidates(requested: str, available: list[str]) -> list[str]:
         candidates = [requested]
     elif sys.platform == "win32":
         candidates = [
-            "TensorrtExecutionProvider",
             "CUDAExecutionProvider",
             "DmlExecutionProvider",
             "OpenVINOExecutionProvider",
-            "WebGPUExecutionProvider",
         ]
     elif sys.platform == "darwin":
-        candidates = ["CoreMLExecutionProvider", "WebGPUExecutionProvider"]
+        candidates = ["CoreMLExecutionProvider"]
     else:
         candidates = [
-            "TensorrtExecutionProvider",
             "CUDAExecutionProvider",
             "MIGraphXExecutionProvider",
-            "ROCMExecutionProvider",
             "OpenVINOExecutionProvider",
-            "WebGPUExecutionProvider",
         ]
     return [name for name in candidates if name in available] + (
         ["CPUExecutionProvider"] if "CPUExecutionProvider" in available else []
