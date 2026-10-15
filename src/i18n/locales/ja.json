@@ -1885,6 +1885,13 @@
         "tonemapperOverride": "グローバルトーンマッパー上書き",
         "tonemapperOverrideDesc": "すべての画像に対して指定したトーンマッパーを強制適用し、調整パネル内の切り替えスイッチを非表示にします。"
       },
+      "depthInference": "ローカル深度 AI のパフォーマンス",
+      "depthInferenceDesc": "ローカル深度マスク処理で使用する CPU スレッド数を選択します。自動では 1 コアを確保し、最大 8 スレッドに制限します。応答性優先は最大 2、パフォーマンス優先は最大 16 スレッドです。次回のモデル読み込みから適用されます。GPU がなくても動作します。",
+      "depthInferenceModes": {
+        "auto": "自動（推奨）",
+        "responsive": "システムの応答性を優先",
+        "performance": "CPU パフォーマンスを最大化"
+      },
       "previewRes": "プレビュー解像度",
       "previewResDesc": "メインプレビューの最大解像度を決定します。値を下げるとパフォーマンスが大幅に向上します。",
       "previewStrategy": "プレビューレンダリング方式",

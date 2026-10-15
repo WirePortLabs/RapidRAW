@@ -1887,6 +1887,13 @@
         "tonemapperOverride": "Globaler Tonemapper-Override",
         "tonemapperOverrideDesc": "Erzwingt einen spezifischen Tonemapper global für alle Bilder."
       },
+      "depthInference": "Leistung der lokalen KI-Tiefenmaske",
+      "depthInferenceDesc": "Legt fest, wie viele CPU-Threads die lokale Tiefenmaskierung nutzt. Automatisch reserviert einen Kern und begrenzt auf 8 Threads; Reaktionsschnell nutzt höchstens 2; Leistung bis zu 16. Wirksam beim nächsten Laden des Tiefenmodells. Funktioniert auch ohne GPU.",
+      "depthInferenceModes": {
+        "auto": "Automatisch (empfohlen)",
+        "responsive": "System reaktionsfähig halten",
+        "performance": "Maximale CPU-Leistung"
+      },
       "previewRes": "Vorschauauflösung",
       "previewResDesc": "Bestimmt die maximale Auflösung der Vorschau. Niedrigere Werte verbessern die Leistung deutlich.",
       "previewStrategy": "Strategie für Vorschau-Rendering",

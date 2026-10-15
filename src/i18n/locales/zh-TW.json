@@ -1885,6 +1885,13 @@
         "tonemapperOverride": "全域色調映射覆蓋",
         "tonemapperOverrideDesc": "為所有影像全域強制使用特定的色調映射器，從調整面板中隱藏色調映射器開關。"
       },
+      "depthInference": "本機 AI 深度處理效能",
+      "depthInferenceDesc": "選擇本機深度遮罩使用 CPU 執行緒的方式。自動模式保留一個核心，最多使用 8 個執行緒；回應優先模式最多使用 2 個；效能優先模式最多使用 16 個。下次載入深度模型時生效。沒有 GPU 也能執行。",
+      "depthInferenceModes": {
+        "auto": "自動（建議）",
+        "responsive": "保持系統回應流暢",
+        "performance": "最高 CPU 效能"
+      },
       "previewRes": "預覽解析度",
       "previewResDesc": "確定預覽的最大解析度。較低的值可顯著提高效能。",
       "previewStrategy": "預覽渲染策略",

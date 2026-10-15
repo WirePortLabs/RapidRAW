@@ -66,12 +66,38 @@ const NORMAL_MAX_SIZE: u32 = 768;
 const NORMAL_NUM_TOKENS: i64 = 2500;
 const NORMAL_SHA256: &str = "24eacb5dc7a2c54c7bc98f7de085ffbed79ad006ea5b664c2c2cdc02ff3a52f0";
 
+// Depth inference is interactive work inside an image editor. Keep an
+// automatic default, but let users favor responsiveness or throughput.
+fn depth_intra_op_threads_for(logical_cores: usize, mode: &str) -> usize {
+    match mode {
+        // Limit worker contention while editing or using a low-power laptop.
+        "responsive" => logical_cores.saturating_sub(1).clamp(1, 2),
+        // Let the depth model use more cores when the user explicitly prefers speed.
+        "performance" => logical_cores.clamp(1, 16),
+        // Default: reserve one logical CPU for the UI/rendering pipeline.
+        _ => logical_cores.saturating_sub(1).clamp(1, 8),
+    }
+}
+
+fn depth_intra_op_threads(mode: &str) -> usize {
+    std::thread::available_parallelism()
+        .map(|cores| depth_intra_op_threads_for(cores.get(), mode))
+        .unwrap_or(1)
+}
+
+fn normalized_depth_mode(mode: Option<String>) -> String {
+    match mode.as_deref() {
+        Some("responsive") => "responsive".to_string(),
+        Some("performance") => "performance".to_string(),
+        _ => "auto".to_string(),
+    }
+}
+
 pub struct AiModels {
     pub sam_encoder: Mutex<Session>,
     pub sam_decoder: Mutex<Session>,
     pub u2netp: Mutex<Session>,
     pub sky_seg: Mutex<Session>,
-    pub depth_anything: Mutex<Session>,
 }
 
 pub struct ClipModels {
@@ -99,6 +125,8 @@ pub struct AiState {
     pub clip_models: Option<Arc<ClipModels>>,
     pub lama_model: Option<Arc<Mutex<Session>>>,
     pub normal_model: Option<Arc<Mutex<Session>>>,
+    pub depth_model: Option<Arc<Mutex<Session>>>,
+    pub depth_model_mode: Option<String>,
     pub embeddings: Option<ImageEmbeddings>,
     pub depth_map: Option<CachedDepthMap>,
 }
@@ -514,29 +542,17 @@ pub async fn get_or_init_ai_models(
         "Sky Model",
     )
     .await?;
-    download_and_verify_model(
-        app_handle,
-        &models_dir,
-        DEPTH_FILENAME,
-        DEPTH_URL,
-        DEPTH_SHA256,
-        "Depth Model",
-    )
-    .await?;
-
     let _ = ort::init().with_name("AI").commit();
 
     let encoder_path = models_dir.join(ENCODER_FILENAME);
     let decoder_path = models_dir.join(DECODER_FILENAME);
     let u2netp_path = models_dir.join(U2NETP_FILENAME);
     let sky_seg_path = models_dir.join(SKYSEG_FILENAME);
-    let depth_path = models_dir.join(DEPTH_FILENAME);
 
     let sam_encoder = Session::builder()?.commit_from_file(encoder_path)?;
     let sam_decoder = Session::builder()?.commit_from_file(decoder_path)?;
     let u2netp = Session::builder()?.commit_from_file(u2netp_path)?;
     let sky_seg = Session::builder()?.commit_from_file(sky_seg_path)?;
-    let depth_anything = Session::builder()?.commit_from_file(depth_path)?;
 
     crate::register_exit_handler();
 
@@ -545,7 +561,6 @@ pub async fn get_or_init_ai_models(
         sam_decoder: Mutex::new(sam_decoder),
         u2netp: Mutex::new(u2netp),
         sky_seg: Mutex::new(sky_seg),
-        depth_anything: Mutex::new(depth_anything),
     });
 
     let mut ai_state_lock = ai_state_mutex.lock().unwrap();
@@ -558,12 +573,98 @@ pub async fn get_or_init_ai_models(
             clip_models: None,
             lama_model: None,
             normal_model: None,
+            depth_model: None,
+            depth_model_mode: None,
             embeddings: None,
             depth_map: None,
         });
     }
 
     Ok(models)
+}
+
+/// Load only the depth model. Depth masking is independent of SAM, foreground,
+/// and sky segmentation, so CPU-only/low-memory systems should not load those
+/// unrelated models just to generate a depth map.
+pub async fn get_or_init_depth_model(
+    app_handle: &tauri::AppHandle,
+    ai_state_mutex: &Mutex<Option<AiState>>,
+    ai_init_lock: &TokioMutex<()>,
+) -> Result<Arc<Mutex<Session>>> {
+    // Existing settings files from earlier versions won't have this field.
+    // Invalid values safely fall back to Auto.
+    let depth_mode = normalized_depth_mode(
+        crate::app_settings::load_settings(app_handle.clone())
+            .ok()
+            .and_then(|settings| settings.depth_inference_mode),
+    );
+
+    if let Some(model) = ai_state_mutex
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|state| {
+            (state.depth_model_mode.as_deref() == Some(depth_mode.as_str()))
+                .then(|| state.depth_model.clone())
+                .flatten()
+        })
+    {
+        return Ok(model);
+    }
+
+    let _guard = ai_init_lock.lock().await;
+
+    if let Some(model) = ai_state_mutex
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|state| {
+            (state.depth_model_mode.as_deref() == Some(depth_mode.as_str()))
+                .then(|| state.depth_model.clone())
+                .flatten()
+        })
+    {
+        return Ok(model);
+    }
+
+    let models_dir = get_models_dir(app_handle)?;
+    download_and_verify_model(
+        app_handle,
+        &models_dir,
+        DEPTH_FILENAME,
+        DEPTH_URL,
+        DEPTH_SHA256,
+        "Depth Model",
+    )
+    .await?;
+
+    let _ = ort::init().with_name("AI-Depth").commit();
+    let session = Arc::new(Mutex::new(
+        Session::builder()?
+            .with_intra_threads(depth_intra_op_threads(&depth_mode))?
+            .commit_from_file(models_dir.join(DEPTH_FILENAME))?,
+    ));
+    crate::register_exit_handler();
+
+    let mut state_lock = ai_state_mutex.lock().unwrap();
+    if let Some(state) = state_lock.as_mut() {
+        state.depth_model = Some(session.clone());
+        state.depth_model_mode = Some(depth_mode);
+    } else {
+        *state_lock = Some(AiState {
+            models: None,
+            denoise_model: None,
+            clip_models: None,
+            lama_model: None,
+            normal_model: None,
+            depth_model: Some(session.clone()),
+            depth_model_mode: Some(depth_mode),
+            embeddings: None,
+            depth_map: None,
+        });
+    }
+
+    Ok(session)
 }
 
 pub async fn get_or_init_denoise_model(
@@ -619,6 +720,8 @@ pub async fn get_or_init_denoise_model(
             clip_models: None,
             lama_model: None,
             normal_model: None,
+            depth_model: None,
+            depth_model_mode: None,
             embeddings: None,
             depth_map: None,
         });
@@ -692,6 +795,8 @@ pub async fn get_or_init_clip_models(
             clip_models: Some(clip_models.clone()),
             lama_model: None,
             normal_model: None,
+            depth_model: None,
+            depth_model_mode: None,
             embeddings: None,
             depth_map: None,
         });
@@ -753,6 +858,8 @@ pub async fn get_or_init_lama_model(
             clip_models: None,
             lama_model: Some(lama_model.clone()),
             normal_model: None,
+            depth_model: None,
+            depth_model_mode: None,
             embeddings: None,
             depth_map: None,
         });
@@ -814,6 +921,8 @@ pub async fn get_or_init_normal_model(
             clip_models: None,
             lama_model: None,
             normal_model: Some(normal_model.clone()),
+            depth_model: None,
+            depth_model_mode: None,
             embeddings: None,
             depth_map: None,
         });
@@ -1693,31 +1802,49 @@ pub fn run_depth_anything_model(
 
     let rw = resized_w as usize;
     let rh = resized_h as usize;
+    let usize_size = DEPTH_INPUT_SIZE as usize;
+    let plane_size = usize_size * usize_size;
+    // The owned Array is contiguous NCHW memory. Writing through its flat
+    // slice avoids repeated ndarray multi-axis indexing in the pixel loop.
+    let input_slice = input_tensor
+        .as_slice_mut()
+        .ok_or_else(|| anyhow::anyhow!("Depth input tensor is not contiguous"))?;
 
     for y in 0..rh {
         for x in 0..rw {
             let idx = (y * rw + x) * 3;
             let dest_y = y + paste_y;
             let dest_x = x + paste_x;
+            let pixel_offset = dest_y * usize_size + dest_x;
 
-            input_tensor[[0, 0, dest_y, dest_x]] =
+            input_slice[pixel_offset] =
                 (raw_pixels[idx] as f32 / 255.0 - mean[0]) / std[0];
-            input_tensor[[0, 1, dest_y, dest_x]] =
+            input_slice[plane_size + pixel_offset] =
                 (raw_pixels[idx + 1] as f32 / 255.0 - mean[1]) / std[1];
-            input_tensor[[0, 2, dest_y, dest_x]] =
+            input_slice[2 * plane_size + pixel_offset] =
                 (raw_pixels[idx + 2] as f32 / 255.0 - mean[2]) / std[2];
         }
     }
 
-    let input_tensor_dyn = input_tensor.into_dyn();
-    let t_input = Tensor::from_array(input_tensor_dyn.as_standard_layout().into_owned())?;
+    // The Array was allocated as contiguous NCHW and filled via its flat slice.
+    // Move the allocation into ORT, avoiding another full tensor copy.
+    let t_input = Tensor::from_array(input_tensor.into_dyn())?;
 
     let mut session = depth_session.lock().unwrap();
     let outputs = session.run(ort::inputs![t_input])?;
-    let output_tensor = outputs[0].try_extract_array::<f32>()?.to_owned();
-    let out_slice = output_tensor.as_slice().unwrap();
-
-    let usize_size = DEPTH_INPUT_SIZE as usize;
+    // The tensor is already owned by ONNX Runtime. Read its view directly
+    // instead of cloning the complete output into a second Array allocation.
+    let output_tensor = outputs[0].try_extract_array::<f32>()?;
+    let out_slice = output_tensor
+        .as_slice()
+        .ok_or_else(|| anyhow::anyhow!("Depth output tensor is not contiguous"))?;
+    if out_slice.len() != plane_size {
+        return Err(anyhow::anyhow!(
+            "Unexpected depth output element count: expected {}, got {}",
+            plane_size,
+            out_slice.len()
+        ));
+    }
 
     let mut min_val = f32::MAX;
     let mut max_val = f32::MIN;
@@ -1942,4 +2069,39 @@ pub struct AiDepthMaskParameters {
     pub flip_vertical: Option<bool>,
     #[serde(default)]
     pub orientation_steps: Option<u8>,
+}
+#[cfg(test)]
+mod depth_perf_tests {
+    use super::{depth_intra_op_threads_for, normalized_depth_mode};
+
+    #[test]
+    fn automatic_mode_balances_ui_responsiveness_and_throughput() {
+        assert_eq!(depth_intra_op_threads_for(0, "auto"), 1);
+        assert_eq!(depth_intra_op_threads_for(1, "auto"), 1);
+        assert_eq!(depth_intra_op_threads_for(2, "auto"), 1);
+        assert_eq!(depth_intra_op_threads_for(4, "auto"), 3);
+        assert_eq!(depth_intra_op_threads_for(64, "auto"), 8);
+    }
+
+    #[test]
+    fn responsive_mode_limits_thread_contention() {
+        assert_eq!(depth_intra_op_threads_for(1, "responsive"), 1);
+        assert_eq!(depth_intra_op_threads_for(4, "responsive"), 2);
+        assert_eq!(depth_intra_op_threads_for(64, "responsive"), 2);
+    }
+
+    #[test]
+    fn performance_mode_uses_more_cores_but_has_a_safety_cap() {
+        assert_eq!(depth_intra_op_threads_for(0, "performance"), 1);
+        assert_eq!(depth_intra_op_threads_for(4, "performance"), 4);
+        assert_eq!(depth_intra_op_threads_for(64, "performance"), 16);
+    }
+
+    #[test]
+    fn unknown_or_missing_mode_defaults_to_auto() {
+        assert_eq!(normalized_depth_mode(None), "auto");
+        assert_eq!(normalized_depth_mode(Some("future-value".to_string())), "auto");
+        assert_eq!(normalized_depth_mode(Some("responsive".to_string())), "responsive");
+        assert_eq!(normalized_depth_mode(Some("performance".to_string())), "performance");
+    }
 }

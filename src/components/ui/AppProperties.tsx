@@ -198,6 +198,7 @@ export type GroupingMode = 'off' | GroupPreference;
 export interface AppSettings {
   aiConnectorAddress?: string;
   aiProvider?: string;
+  depthInferenceMode?: 'auto' | 'responsive' | 'performance';
   decorations?: any;
   editorPreviewResolution?: number;
   smallThumbnailResolution?: number;

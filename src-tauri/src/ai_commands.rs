@@ -9,7 +9,8 @@ use crate::ai_connector;
 use crate::ai_processing::{
     AiDepthMaskParameters, AiForegroundMaskParameters, AiSkyMaskParameters,
     AiSubjectMaskParameters, CachedDepthMap, generate_image_embeddings, get_or_init_ai_models,
-    run_depth_anything_model, run_sam_decoder, run_sky_seg_model, run_u2netp_model,
+    get_or_init_depth_model, run_depth_anything_model, run_sam_decoder, run_sky_seg_model,
+    run_u2netp_model,
 };
 use crate::app_settings::load_settings;
 use crate::app_state::{AiTaskGuard, AppState};
@@ -167,10 +168,6 @@ pub async fn generate_ai_depth_mask(
         return Err("Task cancelled".to_string());
     }
 
-    let models = get_or_init_ai_models(&app_handle, &state.ai_state, &state.ai_init_lock)
-        .await
-        .map_err(|e| e.to_string())?;
-
     let path_hash = {
         let mut hasher = blake3::Hasher::new();
         hasher.update(path.as_bytes());
@@ -189,58 +186,44 @@ pub async fn generate_ai_depth_mask(
         return Err("Task cancelled".to_string());
     }
 
-    let cached_depth = {
-        let mut ai_state_lock = state.ai_state.lock().unwrap();
-        let ai_state = ai_state_lock.as_mut().unwrap();
+    // A depth-only request must work before any other local AI model has been
+    // initialized. Read the one-entry cache without assuming AiState already exists.
+    let cached_depth = state
+        .ai_state
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|ai_state| ai_state.depth_map.as_ref())
+        .filter(|cached| cached.path_hash == path_hash)
+        .cloned();
 
-        if let Some(cached) = &ai_state.depth_map {
-            if cached.path_hash == path_hash {
-                cached.clone()
-            } else {
-                drop(ai_state_lock);
-                let warped_image = get_cached_full_warped_image(&state, &js_adjustments)?;
+    let cached_depth = if let Some(cached) = cached_depth {
+        cached
+    } else {
+        let warped_image = get_cached_full_warped_image(&state, &js_adjustments)?;
 
-                if cancel_flag.as_ref().is_some_and(|t| t.is_cancelled()) {
-                    return Err("Task cancelled".to_string());
-                }
-
-                let depth_img =
-                    run_depth_anything_model(warped_image.as_ref(), &models.depth_anything)
-                        .map_err(|e| e.to_string())?;
-
-                let new_cache = CachedDepthMap {
-                    path_hash: path_hash.clone(),
-                    depth_image: depth_img,
-                    original_size: (warped_image.width(), warped_image.height()),
-                };
-
-                let mut ai_state_lock = state.ai_state.lock().unwrap();
-                let ai_state = ai_state_lock.as_mut().unwrap();
-                ai_state.depth_map = Some(new_cache.clone());
-                new_cache
-            }
-        } else {
-            drop(ai_state_lock);
-            let warped_image = get_cached_full_warped_image(&state, &js_adjustments)?;
-
-            if cancel_flag.as_ref().is_some_and(|t| t.is_cancelled()) {
-                return Err("Task cancelled".to_string());
-            }
-
-            let depth_img = run_depth_anything_model(warped_image.as_ref(), &models.depth_anything)
-                .map_err(|e| e.to_string())?;
-
-            let new_cache = CachedDepthMap {
-                path_hash: path_hash.clone(),
-                depth_image: depth_img,
-                original_size: (warped_image.width(), warped_image.height()),
-            };
-
-            let mut ai_state_lock = state.ai_state.lock().unwrap();
-            let ai_state = ai_state_lock.as_mut().unwrap();
-            ai_state.depth_map = Some(new_cache.clone());
-            new_cache
+        if cancel_flag.as_ref().is_some_and(|t| t.is_cancelled()) {
+            return Err("Task cancelled".to_string());
         }
+
+        let depth_model =
+            get_or_init_depth_model(&app_handle, &state.ai_state, &state.ai_init_lock)
+                .await
+                .map_err(|e| e.to_string())?;
+        let depth_img = run_depth_anything_model(warped_image.as_ref(), &depth_model)
+            .map_err(|e| e.to_string())?;
+
+        let new_cache = CachedDepthMap {
+            path_hash: path_hash.clone(),
+            depth_image: depth_img,
+            original_size: (warped_image.width(), warped_image.height()),
+        };
+
+        let mut ai_state_lock = state.ai_state.lock().unwrap();
+        if let Some(ai_state) = ai_state_lock.as_mut() {
+            ai_state.depth_map = Some(new_cache.clone());
+        }
+        new_cache
     };
 
     if cancel_flag.as_ref().is_some_and(|t| t.is_cancelled()) {
@@ -275,7 +258,12 @@ pub async fn generate_full_image_depth_map(
     state: tauri::State<'_, AppState>,
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
-    let models = crate::ai_processing::get_or_init_ai_models(
+    // Validate the active image before downloading/initializing the depth model.
+    let loaded_image = get_loaded_image(&state)?;
+    let source_image =
+        crate::mask_generation::build_full_source_image(&loaded_image.image, loaded_image.is_raw);
+
+    let depth_model = crate::ai_processing::get_or_init_depth_model(
         &app_handle,
         &state.ai_state,
         &state.ai_init_lock,
@@ -283,13 +271,9 @@ pub async fn generate_full_image_depth_map(
     .await
     .map_err(|e| e.to_string())?;
 
-    let loaded_image = get_loaded_image(&state)?;
-    let source_image =
-        crate::mask_generation::build_full_source_image(&loaded_image.image, loaded_image.is_raw);
-
     let depth_img = crate::ai_processing::run_depth_anything_model(
         source_image.as_ref(),
-        &models.depth_anything,
+        &depth_model,
     )
     .map_err(|e| e.to_string())?;
 

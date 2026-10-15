@@ -598,6 +598,7 @@ export default function SettingsPanel({
     rawPreprocessingSharpening: appSettings?.rawPreprocessingSharpening ?? 0.35,
     applyPreprocessingToNonRaws: appSettings?.applyPreprocessingToNonRaws ?? false,
     useAppleRaw9: appSettings?.useAppleRaw9 ?? false,
+    depthInferenceMode: appSettings?.depthInferenceMode || 'auto',
   });
   const [restartRequired, setRestartRequired] = useState(false);
   const [activeCategory, setActiveCategory] = useState('general');
@@ -620,6 +621,15 @@ export default function SettingsPanel({
       { value: 'full', label: t('settings.processing.qualities.full') },
       { value: 'high', label: t('settings.processing.qualities.high') },
       { value: 'performance', label: t('settings.processing.qualities.performance') },
+    ],
+    [t],
+  );
+
+  const depthInferenceModeOptions = useMemo<OptionItem<string>[]>(
+    () => [
+      { value: 'auto', label: t('settings.processing.depthInferenceModes.auto') },
+      { value: 'responsive', label: t('settings.processing.depthInferenceModes.responsive') },
+      { value: 'performance', label: t('settings.processing.depthInferenceModes.performance') },
     ],
     [t],
   );
@@ -708,6 +718,7 @@ export default function SettingsPanel({
       rawPreprocessingSharpening: appSettings?.rawPreprocessingSharpening ?? 0.35,
       applyPreprocessingToNonRaws: appSettings?.applyPreprocessingToNonRaws ?? false,
       useAppleRaw9: appSettings?.useAppleRaw9 ?? false,
+      depthInferenceMode: appSettings?.depthInferenceMode || 'auto',
     });
     setRestartRequired(false);
   }, [appSettings]);
@@ -1947,6 +1958,24 @@ export default function SettingsPanel({
                       {t('settings.processing.title')}
                     </Text>
                     <div className="space-y-8">
+                      <SettingItem
+                        label={t('settings.processing.depthInference')}
+                        description={t('settings.processing.depthInferenceDesc')}
+                      >
+                        <Dropdown
+                          onChange={(value: string) => handleProcessingSettingChange('depthInferenceMode', value)}
+                          options={depthInferenceModeOptions}
+                          value={
+                            depthInferenceModeOptions.some(
+                              (option) => option.value === processingSettings.depthInferenceMode,
+                            )
+                              ? processingSettings.depthInferenceMode
+                              : 'auto'
+                          }
+                          triggerClassName="bg-bg-primary"
+                        />
+                      </SettingItem>
+
                       <div>
                         <Text variant={TextVariants.heading} className="mb-2">
                           {t('settings.processing.previewStrategy')}
