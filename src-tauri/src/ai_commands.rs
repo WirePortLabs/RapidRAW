@@ -258,6 +258,11 @@ pub async fn generate_full_image_depth_map(
     state: tauri::State<'_, AppState>,
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
+    // Validate the active image before downloading/initializing the depth model.
+    let loaded_image = get_loaded_image(&state)?;
+    let source_image =
+        crate::mask_generation::build_full_source_image(&loaded_image.image, loaded_image.is_raw);
+
     let depth_model = crate::ai_processing::get_or_init_depth_model(
         &app_handle,
         &state.ai_state,
@@ -265,10 +270,6 @@ pub async fn generate_full_image_depth_map(
     )
     .await
     .map_err(|e| e.to_string())?;
-
-    let loaded_image = get_loaded_image(&state)?;
-    let source_image =
-        crate::mask_generation::build_full_source_image(&loaded_image.image, loaded_image.is_raw);
 
     let depth_img = crate::ai_processing::run_depth_anything_model(
         source_image.as_ref(),
