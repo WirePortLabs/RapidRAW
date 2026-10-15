@@ -1621,8 +1621,10 @@ pub fn run_sky_seg_model(
         }
     }
 
-    let input_tensor_dyn = input_tensor.into_dyn();
-    let t_input = Tensor::from_array(input_tensor_dyn.as_standard_layout().into_owned())?;
+    // input_tensor was allocated in standard NCHW layout and filled through
+    // as_slice_mut(), so move its allocation directly into ORT instead of making
+    // another full-size owned copy through as_standard_layout().into_owned().
+    let t_input = Tensor::from_array(input_tensor.into_dyn())?;
 
     let mut session = sky_seg_session.lock().unwrap();
     let outputs = session.run(ort::inputs![t_input])?;
