@@ -66,6 +66,20 @@ const NORMAL_MAX_SIZE: u32 = 768;
 const NORMAL_NUM_TOKENS: i64 = 2500;
 const NORMAL_SHA256: &str = "24eacb5dc7a2c54c7bc98f7de085ffbed79ad006ea5b664c2c2cdc02ff3a52f0";
 
+// Depth inference is interactive work inside an image editor. Reserve at least
+// one logical CPU for the UI/rendering pipeline and cap the default pool to
+// avoid spawning a large worker pool on high-core-count machines. Users can
+// still benchmark this policy on target hardware before changing the cap.
+fn depth_intra_op_threads_for(logical_cores: usize) -> usize {
+    logical_cores.saturating_sub(1).max(1).min(8)
+}
+
+fn depth_intra_op_threads() -> usize {
+    std::thread::available_parallelism()
+        .map(|cores| depth_intra_op_threads_for(cores.get()))
+        .unwrap_or(1)
+}
+
 pub struct AiModels {
     pub sam_encoder: Mutex<Session>,
     pub sam_decoder: Mutex<Session>,
@@ -595,7 +609,9 @@ pub async fn get_or_init_depth_model(
 
     let _ = ort::init().with_name("AI-Depth").commit();
     let session = Arc::new(Mutex::new(
-        Session::builder()?.commit_from_file(models_dir.join(DEPTH_FILENAME))?,
+        Session::builder()?
+            .with_intra_threads(depth_intra_op_threads())?
+            .commit_from_file(models_dir.join(DEPTH_FILENAME))?,
     ));
     crate::register_exit_handler();
 
@@ -2015,4 +2031,23 @@ pub struct AiDepthMaskParameters {
     pub flip_vertical: Option<bool>,
     #[serde(default)]
     pub orientation_steps: Option<u8>,
+}
+#[cfg(test)]
+mod depth_perf_tests {
+    use super::depth_intra_op_threads_for;
+
+    #[test]
+    fn depth_thread_budget_is_safe_for_old_cpus() {
+        assert_eq!(depth_intra_op_threads_for(0), 1);
+        assert_eq!(depth_intra_op_threads_for(1), 1);
+        assert_eq!(depth_intra_op_threads_for(2), 1);
+        assert_eq!(depth_intra_op_threads_for(4), 3);
+    }
+
+    #[test]
+    fn depth_thread_budget_is_capped_on_high_core_count_cpus() {
+        assert_eq!(depth_intra_op_threads_for(8), 7);
+        assert_eq!(depth_intra_op_threads_for(9), 8);
+        assert_eq!(depth_intra_op_threads_for(64), 8);
+    }
 }
