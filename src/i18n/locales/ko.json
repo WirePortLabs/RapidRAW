@@ -1885,6 +1885,13 @@
         "tonemapperOverride": "전역 톤매퍼 재정의",
         "tonemapperOverrideDesc": "모든 이미지에 특정 톤매퍼를 전역으로 강제 적용하고, 조정 패널에서 톤매퍼 전환을 숨깁니다."
       },
+      "depthInference": "로컬 AI 깊이 처리 성능",
+      "depthInferenceDesc": "로컬 깊이 마스크에 사용할 CPU 스레드 수를 선택합니다. 자동은 코어 하나를 비워 두고 최대 8개를 사용합니다. 반응성 우선은 최대 2개, 성능 우선은 최대 16개를 사용합니다. 깊이 모델을 다음에 로드할 때 적용됩니다. GPU 없이도 작동합니다.",
+      "depthInferenceModes": {
+        "auto": "자동(권장)",
+        "responsive": "시스템 반응성 유지",
+        "performance": "최대 CPU 성능"
+      },
       "previewRes": "미리보기 해상도",
       "previewResDesc": "미리보기의 최대 해상도를 결정합니다. 값이 낮을수록 성능이 크게 향상됩니다.",
       "previewStrategy": "미리보기 렌더링 전략",
