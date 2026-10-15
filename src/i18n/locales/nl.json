@@ -1860,6 +1860,13 @@
         "tonemapperOverride": "Globale toonmappingoverride",
         "tonemapperOverrideDesc": "Forceer een specifieke toonmapping globaal voor alle afbeeldingen, waardoor de toonmappingschakelaar verborgen wordt in het aanpassingspaneel."
       },
+      "depthInference": "Prestaties van lokale AI-diepte",
+      "depthInferenceDesc": "Kies hoe lokale dieptemaskers CPU-threads gebruiken. Automatisch reserveert een kern en gebruikt maximaal 8 threads; Responsief gebruikt maximaal 2; Prestaties maximaal 16. De instelling geldt wanneer het dieptemodel opnieuw wordt geladen. Werkt ook zonder GPU.",
+      "depthInferenceModes": {
+        "auto": "Automatisch (aanbevolen)",
+        "responsive": "Systeem responsief houden",
+        "performance": "Maximale CPU-prestaties"
+      },
       "previewRes": "Voorbeeldresolutie",
       "previewResDesc": "Bepaalt de maximale resolutie van het voorbeeld. Lagere waarden verbeteren de prestaties aanzienlijk.",
       "previewStrategy": "Voorbeeldrenderstrategie",
