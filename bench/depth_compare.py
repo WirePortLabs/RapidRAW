@@ -453,6 +453,34 @@ def main() -> int:
             )
             report["models"].append(model_report)
         except Exception as exc:
+            if args.provider == "auto" and "CPUExecutionProvider" in available_providers:
+                # Some providers register successfully but fail on the first actual Run().
+                # Retry the entire model benchmark on CPU so results are never mixed providers.
+                print(
+                    f"Auto-provider run failed for {mode}; retrying complete benchmark on CPU: {exc}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                gc.collect()
+                try:
+                    model_report = benchmark_one(
+                        model_path=model_path,
+                        mode=mode,
+                        images=images,
+                        output_dir=args.output_dir,
+                        provider="CPUExecutionProvider",
+                        runs=args.runs,
+                        warmups=args.warmups,
+                        resolution=args.da3_resolution,
+                        invert_preview=args.invert_previews,
+                        gpu_index=args.gpu_index,
+                        intra_threads=intra_threads,
+                    )
+                    model_report["automaticFallbackReason"] = str(exc)
+                    report["models"].append(model_report)
+                    continue
+                except Exception as cpu_exc:
+                    exc = RuntimeError(f"Accelerator attempt failed ({exc}); CPU fallback failed ({cpu_exc})")
             report["models"].append({"mode": mode, "modelPath": str(model_path), "error": str(exc)})
             print(f"ERROR benchmarking {mode}: {exc}", file=sys.stderr)
     report_path = args.output_dir / "report.json"
