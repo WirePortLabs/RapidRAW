@@ -1922,6 +1922,13 @@
         "tonemapperOverride": "Surcharge globale du mappeur de tons",
         "tonemapperOverrideDesc": "Forcer un mappeur de tons spécifique de manière globale pour toutes les images, masquant le sélecteur de mappeur de tons dans le panneau des ajustements."
       },
+      "depthInference": "Performances de profondeur IA locale",
+      "depthInferenceDesc": "Choisissez le nombre de threads CPU pour le masque de profondeur local. Auto réserve un cœur et limite à 8 threads ; Réactif en utilise 2 au maximum ; Performances jusqu’à 16. Le changement s’applique au prochain chargement du modèle. Fonctionne aussi sans GPU.",
+      "depthInferenceModes": {
+        "auto": "Auto (recommandé)",
+        "responsive": "Préserver la réactivité du système",
+        "performance": "Performances CPU maximales"
+      },
       "previewRes": "Résolution de l'aperçu",
       "previewResDesc": "Détermine la résolution maximale de l'aperçu. Des valeurs plus basses améliorent considérablement les performances.",
       "previewStrategy": "Stratégie de rendu de l'aperçu",
