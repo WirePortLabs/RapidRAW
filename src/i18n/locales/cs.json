@@ -1886,6 +1886,13 @@
         "tonemapperOverride": "Globální přepsání mapování tónů",
         "tonemapperOverrideDesc": "Vynutí určité mapování tónů globálně pro všechny snímky a skryje přepínač mapování tónů na panelu úprav."
       },
+      "depthInference": "Výkon lokální hloubkové AI",
+      "depthInferenceDesc": "Určuje využití vláken CPU pro místní maskování hloubky. Automatický režim rezervuje jedno jádro a používá nejvýše 8 vláken; Plynulý režim nejvýše 2; Výkon až 16. Změna se projeví při příštím načtení modelu. Funguje i bez GPU.",
+      "depthInferenceModes": {
+        "auto": "Automaticky (doporučeno)",
+        "responsive": "Zachovat plynulost systému",
+        "performance": "Maximální výkon CPU"
+      },
       "previewRes": "Rozlišení náhledu",
       "previewResDesc": "Určuje maximální rozlišení náhledu. Nižší hodnoty výrazně zlepšují výkon.",
       "previewStrategy": "Náhled strategie vykreslování",
