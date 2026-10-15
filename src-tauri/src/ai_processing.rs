@@ -604,9 +604,11 @@ pub async fn get_or_init_depth_model(
         .unwrap()
         .as_ref()
         .and_then(|state| {
-            (state.depth_model_mode.as_deref() == Some(depth_mode.as_str()))
-                .then(|| state.depth_model.clone())
-                .flatten()
+            if state.depth_model_mode.as_deref() == Some(depth_mode.as_str()) {
+                state.depth_model.clone()
+            } else {
+                None
+            }
         })
     {
         return Ok(model);
@@ -619,9 +621,11 @@ pub async fn get_or_init_depth_model(
         .unwrap()
         .as_ref()
         .and_then(|state| {
-            (state.depth_model_mode.as_deref() == Some(depth_mode.as_str()))
-                .then(|| state.depth_model.clone())
-                .flatten()
+            if state.depth_model_mode.as_deref() == Some(depth_mode.as_str()) {
+                state.depth_model.clone()
+            } else {
+                None
+            }
         })
     {
         return Ok(model);
@@ -2101,7 +2105,13 @@ mod depth_perf_tests {
     fn unknown_or_missing_mode_defaults_to_auto() {
         assert_eq!(normalized_depth_mode(None), "auto");
         assert_eq!(normalized_depth_mode(Some("future-value".to_string())), "auto");
-        assert_eq!(normalized_depth_mode(Some("responsive".to_string())), "responsive");
-        assert_eq!(normalized_depth_mode(Some("performance".to_string())), "performance");
+        assert_eq!(
+            normalized_depth_mode(Some("responsive".to_string())),
+            "responsive"
+        );
+        assert_eq!(
+            normalized_depth_mode(Some("performance".to_string())),
+            "performance"
+        );
     }
 }
