@@ -66,18 +66,31 @@ const NORMAL_MAX_SIZE: u32 = 768;
 const NORMAL_NUM_TOKENS: i64 = 2500;
 const NORMAL_SHA256: &str = "24eacb5dc7a2c54c7bc98f7de085ffbed79ad006ea5b664c2c2cdc02ff3a52f0";
 
-// Depth inference is interactive work inside an image editor. Reserve at least
-// one logical CPU for the UI/rendering pipeline and cap the default pool to
-// avoid spawning a large worker pool on high-core-count machines. Users can
-// still benchmark this policy on target hardware before changing the cap.
-fn depth_intra_op_threads_for(logical_cores: usize) -> usize {
-    logical_cores.saturating_sub(1).clamp(1, 8)
+// Depth inference is interactive work inside an image editor. Keep an
+// automatic default, but let users favor responsiveness or throughput.
+fn depth_intra_op_threads_for(logical_cores: usize, mode: &str) -> usize {
+    match mode {
+        // Limit worker contention while editing or using a low-power laptop.
+        "responsive" => logical_cores.saturating_sub(1).clamp(1, 2),
+        // Let the depth model use more cores when the user explicitly prefers speed.
+        "performance" => logical_cores.clamp(1, 16),
+        // Default: reserve one logical CPU for the UI/rendering pipeline.
+        _ => logical_cores.saturating_sub(1).clamp(1, 8),
+    }
 }
 
-fn depth_intra_op_threads() -> usize {
+fn depth_intra_op_threads(mode: &str) -> usize {
     std::thread::available_parallelism()
-        .map(|cores| depth_intra_op_threads_for(cores.get()))
+        .map(|cores| depth_intra_op_threads_for(cores.get(), mode))
         .unwrap_or(1)
+}
+
+fn normalized_depth_mode(mode: Option<String>) -> String {
+    match mode.as_deref() {
+        Some("responsive") => "responsive".to_string(),
+        Some("performance") => "performance".to_string(),
+        _ => "auto".to_string(),
+    }
 }
 
 pub struct AiModels {
@@ -113,6 +126,7 @@ pub struct AiState {
     pub lama_model: Option<Arc<Mutex<Session>>>,
     pub normal_model: Option<Arc<Mutex<Session>>>,
     pub depth_model: Option<Arc<Mutex<Session>>>,
+    pub depth_model_mode: Option<String>,
     pub embeddings: Option<ImageEmbeddings>,
     pub depth_map: Option<CachedDepthMap>,
 }
@@ -560,6 +574,7 @@ pub async fn get_or_init_ai_models(
             lama_model: None,
             normal_model: None,
             depth_model: None,
+            depth_model_mode: None,
             embeddings: None,
             depth_map: None,
         });
@@ -576,11 +591,23 @@ pub async fn get_or_init_depth_model(
     ai_state_mutex: &Mutex<Option<AiState>>,
     ai_init_lock: &TokioMutex<()>,
 ) -> Result<Arc<Mutex<Session>>> {
+    // Existing settings files from earlier versions won't have this field.
+    // Invalid values safely fall back to Auto.
+    let depth_mode = normalized_depth_mode(
+        crate::app_settings::load_settings(app_handle.clone())
+            .ok()
+            .and_then(|settings| settings.depth_inference_mode),
+    );
+
     if let Some(model) = ai_state_mutex
         .lock()
         .unwrap()
         .as_ref()
-        .and_then(|state| state.depth_model.clone())
+        .and_then(|state| {
+            (state.depth_model_mode.as_deref() == Some(depth_mode.as_str()))
+                .then(|| state.depth_model.clone())
+                .flatten()
+        })
     {
         return Ok(model);
     }
@@ -591,7 +618,11 @@ pub async fn get_or_init_depth_model(
         .lock()
         .unwrap()
         .as_ref()
-        .and_then(|state| state.depth_model.clone())
+        .and_then(|state| {
+            (state.depth_model_mode.as_deref() == Some(depth_mode.as_str()))
+                .then(|| state.depth_model.clone())
+                .flatten()
+        })
     {
         return Ok(model);
     }
@@ -610,7 +641,7 @@ pub async fn get_or_init_depth_model(
     let _ = ort::init().with_name("AI-Depth").commit();
     let session = Arc::new(Mutex::new(
         Session::builder()?
-            .with_intra_threads(depth_intra_op_threads())?
+            .with_intra_threads(depth_intra_op_threads(&depth_mode))?
             .commit_from_file(models_dir.join(DEPTH_FILENAME))?,
     ));
     crate::register_exit_handler();
@@ -618,6 +649,7 @@ pub async fn get_or_init_depth_model(
     let mut state_lock = ai_state_mutex.lock().unwrap();
     if let Some(state) = state_lock.as_mut() {
         state.depth_model = Some(session.clone());
+        state.depth_model_mode = Some(depth_mode);
     } else {
         *state_lock = Some(AiState {
             models: None,
@@ -626,6 +658,7 @@ pub async fn get_or_init_depth_model(
             lama_model: None,
             normal_model: None,
             depth_model: Some(session.clone()),
+            depth_model_mode: Some(depth_mode),
             embeddings: None,
             depth_map: None,
         });
@@ -688,6 +721,7 @@ pub async fn get_or_init_denoise_model(
             lama_model: None,
             normal_model: None,
             depth_model: None,
+            depth_model_mode: None,
             embeddings: None,
             depth_map: None,
         });
@@ -762,6 +796,7 @@ pub async fn get_or_init_clip_models(
             lama_model: None,
             normal_model: None,
             depth_model: None,
+            depth_model_mode: None,
             embeddings: None,
             depth_map: None,
         });
@@ -824,6 +859,7 @@ pub async fn get_or_init_lama_model(
             lama_model: Some(lama_model.clone()),
             normal_model: None,
             depth_model: None,
+            depth_model_mode: None,
             embeddings: None,
             depth_map: None,
         });
@@ -886,6 +922,7 @@ pub async fn get_or_init_normal_model(
             lama_model: None,
             normal_model: Some(normal_model.clone()),
             depth_model: None,
+            depth_model_mode: None,
             embeddings: None,
             depth_map: None,
         });
@@ -2035,20 +2072,36 @@ pub struct AiDepthMaskParameters {
 }
 #[cfg(test)]
 mod depth_perf_tests {
-    use super::depth_intra_op_threads_for;
+    use super::{depth_intra_op_threads_for, normalized_depth_mode};
 
     #[test]
-    fn depth_thread_budget_is_safe_for_old_cpus() {
-        assert_eq!(depth_intra_op_threads_for(0), 1);
-        assert_eq!(depth_intra_op_threads_for(1), 1);
-        assert_eq!(depth_intra_op_threads_for(2), 1);
-        assert_eq!(depth_intra_op_threads_for(4), 3);
+    fn automatic_mode_balances_ui_responsiveness_and_throughput() {
+        assert_eq!(depth_intra_op_threads_for(0, "auto"), 1);
+        assert_eq!(depth_intra_op_threads_for(1, "auto"), 1);
+        assert_eq!(depth_intra_op_threads_for(2, "auto"), 1);
+        assert_eq!(depth_intra_op_threads_for(4, "auto"), 3);
+        assert_eq!(depth_intra_op_threads_for(64, "auto"), 8);
     }
 
     #[test]
-    fn depth_thread_budget_is_capped_on_high_core_count_cpus() {
-        assert_eq!(depth_intra_op_threads_for(8), 7);
-        assert_eq!(depth_intra_op_threads_for(9), 8);
-        assert_eq!(depth_intra_op_threads_for(64), 8);
+    fn responsive_mode_limits_thread_contention() {
+        assert_eq!(depth_intra_op_threads_for(1, "responsive"), 1);
+        assert_eq!(depth_intra_op_threads_for(4, "responsive"), 2);
+        assert_eq!(depth_intra_op_threads_for(64, "responsive"), 2);
+    }
+
+    #[test]
+    fn performance_mode_uses_more_cores_but_has_a_safety_cap() {
+        assert_eq!(depth_intra_op_threads_for(0, "performance"), 1);
+        assert_eq!(depth_intra_op_threads_for(4, "performance"), 4);
+        assert_eq!(depth_intra_op_threads_for(64, "performance"), 16);
+    }
+
+    #[test]
+    fn unknown_or_missing_mode_defaults_to_auto() {
+        assert_eq!(normalized_depth_mode(None), "auto");
+        assert_eq!(normalized_depth_mode(Some("future-value".to_string())), "auto");
+        assert_eq!(normalized_depth_mode(Some("responsive".to_string())), "responsive");
+        assert_eq!(normalized_depth_mode(Some("performance".to_string())), "performance");
     }
 }
