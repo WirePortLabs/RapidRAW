@@ -1959,6 +1959,13 @@
         "tonemapperOverride": "Globalne nadpisywanie mapowania tonów",
         "tonemapperOverrideDesc": "Wymusza konkretne mapowanie tonów globalnie dla wszystkich obrazów, ukrywając pole wyboru mapera z panelu edycji."
       },
+      "depthInference": "Wydajność lokalnego AI głębi",
+      "depthInferenceDesc": "Wybierz sposób używania wątków CPU podczas lokalnego tworzenia masek głębi. Automatycznie rezerwuje jeden rdzeń i używa maksymalnie 8 wątków; Responsywność używa najwyżej 2; Wydajność do 16. Zmiana zacznie działać po ponownym załadowaniu modelu. Działa również bez GPU.",
+      "depthInferenceModes": {
+        "auto": "Automatycznie (zalecane)",
+        "responsive": "Zachowaj responsywność systemu",
+        "performance": "Maksymalna wydajność CPU"
+      },
       "previewRes": "Rozdzielczość podglądu",
       "previewResDesc": "Ogranicza maksymalną rozdzielczość podglądu. Niższe wartości zauważalnie poprawiają wydajność.",
       "previewStrategy": "Strategia renderowania podglądu",
