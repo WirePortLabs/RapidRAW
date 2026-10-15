@@ -219,7 +219,8 @@ pub async fn generate_ai_depth_mask(
             original_size: (warped_image.width(), warped_image.height()),
         };
 
-        if let Some(ai_state) = state.ai_state.lock().unwrap().as_mut() {
+        let mut ai_state_lock = state.ai_state.lock().unwrap();
+        if let Some(ai_state) = ai_state_lock.as_mut() {
             ai_state.depth_map = Some(new_cache.clone());
         }
         new_cache
