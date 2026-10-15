@@ -239,6 +239,9 @@ def open_session(
         provider_spec: list[Any] = [candidate]
         if candidate == "OpenVINOExecutionProvider":
             provider_spec = [(candidate, {"device_type": "AUTO"})]
+        if candidate == "TensorrtExecutionProvider" and "CUDAExecutionProvider" in available:
+            # TensorRT handles supported subgraphs first, then CUDA, then CPU.
+            provider_spec.append("CUDAExecutionProvider")
         if candidate != "CPUExecutionProvider":
             provider_spec.append("CPUExecutionProvider")
         candidate_options = options
