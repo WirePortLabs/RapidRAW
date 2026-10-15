@@ -1693,18 +1693,26 @@ pub fn run_depth_anything_model(
 
     let rw = resized_w as usize;
     let rh = resized_h as usize;
+    let usize_size = DEPTH_INPUT_SIZE as usize;
+    let plane_size = usize_size * usize_size;
+    // The owned Array is contiguous NCHW memory. Writing through its flat
+    // slice avoids repeated ndarray multi-axis indexing in the pixel loop.
+    let input_slice = input_tensor
+        .as_slice_mut()
+        .ok_or_else(|| anyhow::anyhow!("Depth input tensor is not contiguous"))?;
 
     for y in 0..rh {
         for x in 0..rw {
             let idx = (y * rw + x) * 3;
             let dest_y = y + paste_y;
             let dest_x = x + paste_x;
+            let pixel_offset = dest_y * usize_size + dest_x;
 
-            input_tensor[[0, 0, dest_y, dest_x]] =
+            input_slice[pixel_offset] =
                 (raw_pixels[idx] as f32 / 255.0 - mean[0]) / std[0];
-            input_tensor[[0, 1, dest_y, dest_x]] =
+            input_slice[plane_size + pixel_offset] =
                 (raw_pixels[idx + 1] as f32 / 255.0 - mean[1]) / std[1];
-            input_tensor[[0, 2, dest_y, dest_x]] =
+            input_slice[2 * plane_size + pixel_offset] =
                 (raw_pixels[idx + 2] as f32 / 255.0 - mean[2]) / std[2];
         }
     }
@@ -1714,10 +1722,19 @@ pub fn run_depth_anything_model(
 
     let mut session = depth_session.lock().unwrap();
     let outputs = session.run(ort::inputs![t_input])?;
-    let output_tensor = outputs[0].try_extract_array::<f32>()?.to_owned();
-    let out_slice = output_tensor.as_slice().unwrap();
-
-    let usize_size = DEPTH_INPUT_SIZE as usize;
+    // The tensor is already owned by ONNX Runtime. Read its view directly
+    // instead of cloning the complete output into a second Array allocation.
+    let output_tensor = outputs[0].try_extract_array::<f32>()?;
+    let out_slice = output_tensor
+        .as_slice()
+        .ok_or_else(|| anyhow::anyhow!("Depth output tensor is not contiguous"))?;
+    if out_slice.len() != plane_size {
+        return Err(anyhow::anyhow!(
+            "Unexpected depth output element count: expected {}, got {}",
+            plane_size,
+            out_slice.len()
+        ));
+    }
 
     let mut min_val = f32::MAX;
     let mut max_val = f32::MIN;
