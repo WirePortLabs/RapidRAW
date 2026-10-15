@@ -96,7 +96,7 @@ PR summary: maps the live depth-mask pipeline, identifies DA3-SMALL as the initi
 - DA3 model metadata: verified from the official README model-card table.
 - Existing DA2 artifact size and SHA: verified from RapidRAW's Hugging Face model-host page.
 - Benchmark code: provided, including provider auto-probing and a bounded CPU thread count; not executed in this environment against actual ONNX files/hardware.
-- Immediate CPU/memory improvements added on the evaluation branch: depth-only model initialization; contiguous NCHW writes; avoid cloning the full ONNX output tensor before postprocessing; bound the depth session's default intra-op thread count to `max(1, min(logical_cores - 1, 8))` so older CPUs reserve capacity for the editor and high-core-count systems do not spawn an oversized pool.
+- Immediate CPU/memory improvements added on the evaluation branch: depth-only model initialization; contiguous NCHW writes; move the preprocessed input allocation directly into ONNX Runtime; avoid cloning the full ONNX output tensor before postprocessing; bound the depth session's default intra-op thread count to `clamp(logical_cores.saturating_sub(1), 1, 8)` so small CPUs preserve some UI capacity and high-core-count systems do not spawn an oversized pool.
 - Added Rust unit tests for the thread-budget policy (zero/one/two/four logical cores and an eight-thread cap). These tests are committed but could not be executed in this environment because Rust/Cargo is not installed and repository GitHub Actions has no run/status records for this draft branch.
 - Depth model is now loaded independently; the inference input loop uses contiguous memory, and the full ONNX output no longer gets cloned before postprocessing.
 - DA3 GPU/VRAM and RapidRAW-app startup numbers: not measured.
@@ -134,7 +134,7 @@ This is a proposed profile matrix, **not yet the app's automatic hardware policy
 ### What the current branch already optimizes
 
 - `get_or_init_depth_model` loads/verifies just the depth model for depth-mask work, rather than forcing download/session allocation for SAM, foreground, and sky models. The same shared initialization lock prevents duplicate concurrent model initialization.
-- `run_depth_anything_model` fills contiguous NCHW input storage through a flat slice and reads the ONNX output through a borrowed view, avoiding a second full output-array allocation. The output length is validated before indexing.
+- `run_depth_anything_model` fills contiguous NCHW input storage through a flat slice, moves the input allocation into ONNX Runtime without a layout-copy allocation, and reads the ONNX output through a borrowed view, avoiding a second full output-array allocation. The output length is validated before indexing.
 - `bench/depth_compare.py --provider auto` probes installed accelerators in a platform-preferred order, records the attempted/selected provider, retains CPU fallback, and allows explicit `--intra-threads` tests. It records CPU architecture, logical processor count, and system RAM. NVIDIA VRAM sampling is optional; iGPU shared-memory attribution is not portable.
 - The thread-budget unit tests are present but unexecuted here. These changes have **not** been benchmarked on physical hardware in this environment. Their expected benefit must be verified with the included harness.
 
