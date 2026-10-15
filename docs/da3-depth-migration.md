@@ -95,6 +95,47 @@ PR summary: maps the live depth-mask pipeline, identifies DA3-SMALL as the initi
 - Repository analysis: performed against the public tree at commit \`56aa54b1d16afab7f3ad53a32845c093545704b3\`.
 - DA3 model metadata: verified from the official README model-card table.
 - Existing DA2 artifact size and SHA: verified from RapidRAW's Hugging Face model-host page.
-- Benchmark code: provided; not executed in this environment against actual ONNX files/hardware.
+- Benchmark code: provided, including provider auto-probing and a bounded CPU thread count; not executed in this environment against actual ONNX files/hardware.
+- Immediate CPU/memory improvements added on the evaluation branch: depth-only model initialization; contiguous NCHW writes; avoid cloning the full ONNX output tensor before postprocessing.
 - DA3 GPU/VRAM and RapidRAW-app startup numbers: not measured.
-- Depth-quality improvement: plausible from the official DA3 paper/model card, but not established for RapidRAW's depth-mask use case. Production migration is therefore **not yet justified**.
+- Depth-quality improvement: plausible from the official DA3 paper/model card, but not established for RapidRAW's depth-mask use case. The DA3 production migration is therefore **not yet justified**.
+
+
+## Hardware strategy: older PCs through modern accelerators
+
+The project should maintain a **CPU-first compatibility baseline** and treat hardware acceleration as an optional, tested capability. The current production runtime configuration (the bundled ONNX Runtime dynamic library, \`ort\` rc.10, and default session builders) does not yet register or package a provider-specific runtime. Merely adding provider names in Rust will not enable them; the compatible provider plugin and its dependent libraries must also be shipped or installed.
+
+| Hardware class | Preferred candidate to evaluate | Fallback / caveats |
+|---|---|---|
+| Very old Intel/AMD CPU, no usable GPU | ONNX Runtime CPU provider; bounded intra-op threads and lower DA3 input profile if the export is dynamic | Verify the bundled ORT binary's CPU instruction-set baseline on the oldest supported machine. A GPU must never be mandatory. |
+| Modern Intel CPU / Intel iGPU / Intel NPU | OpenVINO EP with \`device_type=AUTO\`, after validating the exact provider and DA3 graph | CPU EP if OpenVINO isn't installed, cannot initialize, or is slower. OpenVINO requires a provider package compatible with RapidRAW's ORT version. |
+| NVIDIA discrete GPU, older or newer | CUDA EP first when its compatible runtime is present; consider TensorRT only as a separately measured option | CUDA versions, driver, GPU capability, and provider DLL dependencies must match. Keep CPU as the final fallback; don't require TensorRT for older cards. |
+| AMD integrated/discrete GPU on Windows | DirectML EP on supported DirectX 12 devices; benchmark versus CPU | Shared-memory iGPUs can lose time to transfers or compete with the editor for memory; auto mode must be allowed to choose CPU. |
+| AMD GPU on Linux | MIGraphX / ROCm only for explicitly supported combinations and packaged builds | Do not make ROCm a universal AMD requirement. Older and unsupported GPUs use CPU. |
+| Apple Silicon / supported macOS | CoreML EP | CPU fallback; measure rather than assume ANE/GPU acceleration helps this model. |
+| Any machine whose accelerator EP is missing or fails | CPU EP | Session creation/inference errors from the accelerated path should trigger a CPU retry, with the fallback recorded in logs. |
+
+These are provider candidates, not a claim that the current RapidRAW package already contains or activates every EP. ONNX Runtime documents CPU as the portable default and provider priority/fallback; the \`ort\` crate requires the matching Cargo feature **and** a runtime/provider build that actually includes the provider. See https://onnxruntime.ai/docs/execution-providers/ and https://docs.rs/ort/latest/ort/session/builder/struct.SessionBuilder.html.
+
+### Device profiles for DA3
+
+After the export has passed dynamic-shape validation, benchmark these multiples of the DA3 patch size (14):
+
+| Profile | Longest-side processing target | Intended use |
+|---|---:|---|
+| Quality | 504 px | Best detail; default on capable hardware |
+| Balanced | 392 px | Older CPUs, low-power laptops, or an accelerator that does not outperform CPU |
+| Performance | 280 px | Very slow/low-memory systems where interactive use matters more than fine mask edges |
+
+This is a proposed profile matrix, **not yet the app's automatic hardware policy**. Start with 504 and 392 for matched-photo comparisons. Ship automatic profile selection only after recording depth-mask quality and latency on representative old CPU-only, Intel iGPU, AMD iGPU/dGPU, and NVIDIA dGPU systems. Fixed-shape ONNX exports cannot switch these resolutions; the chosen model must support the intended dimensions, and all input dimensions must comply with DA3's patch-size requirements.
+
+### What the current branch already optimizes
+
+- \`get_or_init_depth_model\` loads/verifies just the depth model for depth-mask work, rather than forcing download/session allocation for SAM, foreground, and sky models. The same shared initialization lock prevents duplicate concurrent model initialization.
+- \`run_depth_anything_model\` fills contiguous NCHW input storage through a flat slice and reads the ONNX output through a borrowed view, avoiding a second full output-array allocation. The output length is validated before indexing.
+- \`bench/depth_compare.py --provider auto\` probes installed accelerators in a platform-preferred order, records the attempted/selected provider, retains CPU fallback, and allows explicit \`--intra-threads\` tests. It records CPU architecture, logical processor count, and system RAM. NVIDIA VRAM sampling is optional; iGPU shared-memory attribution is not portable.
+- These changes have **not** been benchmarked on physical hardware in this environment. Their expected benefit must be verified with the included harness.
+
+### Release acceptance matrix
+
+At minimum, run a fixed image suite on: (1) the oldest supported CPU without a discrete GPU, (2) a recent Intel iGPU system, (3) an AMD iGPU or DirectML-capable system, (4) an NVIDIA system with supported CUDA, and (5) a system where the requested EP is intentionally unavailable. For each, record cold model-load time, warmed inference median/p95, peak RSS, accelerator memory where observable, depth-mask quality, CPU fallback success, and the actual ORT provider placement from profiling. Test AC/battery mode and a low-memory system. Do not call an EP "active" just because registration succeeded: provider registration and actual graph-node placement are different facts.
