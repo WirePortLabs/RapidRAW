@@ -511,6 +511,10 @@ pub struct AppSettings {
     pub thumbnail_size: Option<String>,
     pub thumbnail_aspect_ratio: Option<String>,
     pub ai_provider: Option<String>,
+    /// CPU-thread strategy used by the local depth-mask model session.
+    /// Older settings files omit this field and fall back to Auto.
+    #[serde(default)]
+    pub depth_inference_mode: Option<String>,
     #[serde(default = "default_open_tree_sections")]
     pub open_tree_sections: Vec<String>,
     #[serde(default)]
@@ -654,6 +658,7 @@ impl Default for AppSettings {
             thumbnail_size: Some("medium".to_string()),
             thumbnail_aspect_ratio: Some("contain".to_string()),
             ai_provider: Some("cpu".to_string()),
+            depth_inference_mode: Some("auto".to_string()),
             open_tree_sections: default_open_tree_sections(),
             copy_paste_settings: CopyPasteSettings::default(),
             raw_highlight_compression: Some(2.5),
