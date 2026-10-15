@@ -71,7 +71,6 @@ pub struct AiModels {
     pub sam_decoder: Mutex<Session>,
     pub u2netp: Mutex<Session>,
     pub sky_seg: Mutex<Session>,
-    pub depth_anything: Mutex<Session>,
 }
 
 pub struct ClipModels {
@@ -99,6 +98,7 @@ pub struct AiState {
     pub clip_models: Option<Arc<ClipModels>>,
     pub lama_model: Option<Arc<Mutex<Session>>>,
     pub normal_model: Option<Arc<Mutex<Session>>>,
+    pub depth_model: Option<Arc<Mutex<Session>>>,
     pub embeddings: Option<ImageEmbeddings>,
     pub depth_map: Option<CachedDepthMap>,
 }
@@ -514,29 +514,17 @@ pub async fn get_or_init_ai_models(
         "Sky Model",
     )
     .await?;
-    download_and_verify_model(
-        app_handle,
-        &models_dir,
-        DEPTH_FILENAME,
-        DEPTH_URL,
-        DEPTH_SHA256,
-        "Depth Model",
-    )
-    .await?;
-
     let _ = ort::init().with_name("AI").commit();
 
     let encoder_path = models_dir.join(ENCODER_FILENAME);
     let decoder_path = models_dir.join(DECODER_FILENAME);
     let u2netp_path = models_dir.join(U2NETP_FILENAME);
     let sky_seg_path = models_dir.join(SKYSEG_FILENAME);
-    let depth_path = models_dir.join(DEPTH_FILENAME);
 
     let sam_encoder = Session::builder()?.commit_from_file(encoder_path)?;
     let sam_decoder = Session::builder()?.commit_from_file(decoder_path)?;
     let u2netp = Session::builder()?.commit_from_file(u2netp_path)?;
     let sky_seg = Session::builder()?.commit_from_file(sky_seg_path)?;
-    let depth_anything = Session::builder()?.commit_from_file(depth_path)?;
 
     crate::register_exit_handler();
 
@@ -545,7 +533,6 @@ pub async fn get_or_init_ai_models(
         sam_decoder: Mutex::new(sam_decoder),
         u2netp: Mutex::new(u2netp),
         sky_seg: Mutex::new(sky_seg),
-        depth_anything: Mutex::new(depth_anything),
     });
 
     let mut ai_state_lock = ai_state_mutex.lock().unwrap();
@@ -558,12 +545,77 @@ pub async fn get_or_init_ai_models(
             clip_models: None,
             lama_model: None,
             normal_model: None,
+            depth_model: None,
             embeddings: None,
             depth_map: None,
         });
     }
 
     Ok(models)
+}
+
+/// Load only the depth model. Depth masking is independent of SAM, foreground,
+/// and sky segmentation, so CPU-only/low-memory systems should not load those
+/// unrelated models just to generate a depth map.
+pub async fn get_or_init_depth_model(
+    app_handle: &tauri::AppHandle,
+    ai_state_mutex: &Mutex<Option<AiState>>,
+    ai_init_lock: &TokioMutex<()>,
+) -> Result<Arc<Mutex<Session>>> {
+    if let Some(model) = ai_state_mutex
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|state| state.depth_model.clone())
+    {
+        return Ok(model);
+    }
+
+    let _guard = ai_init_lock.lock().await;
+
+    if let Some(model) = ai_state_mutex
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|state| state.depth_model.clone())
+    {
+        return Ok(model);
+    }
+
+    let models_dir = get_models_dir(app_handle)?;
+    download_and_verify_model(
+        app_handle,
+        &models_dir,
+        DEPTH_FILENAME,
+        DEPTH_URL,
+        DEPTH_SHA256,
+        "Depth Model",
+    )
+    .await?;
+
+    let _ = ort::init().with_name("AI-Depth").commit();
+    let session = Arc::new(Mutex::new(
+        Session::builder()?.commit_from_file(models_dir.join(DEPTH_FILENAME))?,
+    ));
+    crate::register_exit_handler();
+
+    let mut state_lock = ai_state_mutex.lock().unwrap();
+    if let Some(state) = state_lock.as_mut() {
+        state.depth_model = Some(session.clone());
+    } else {
+        *state_lock = Some(AiState {
+            models: None,
+            denoise_model: None,
+            clip_models: None,
+            lama_model: None,
+            normal_model: None,
+            depth_model: Some(session.clone()),
+            embeddings: None,
+            depth_map: None,
+        });
+    }
+
+    Ok(session)
 }
 
 pub async fn get_or_init_denoise_model(
@@ -619,6 +671,7 @@ pub async fn get_or_init_denoise_model(
             clip_models: None,
             lama_model: None,
             normal_model: None,
+            depth_model: None,
             embeddings: None,
             depth_map: None,
         });
@@ -692,6 +745,7 @@ pub async fn get_or_init_clip_models(
             clip_models: Some(clip_models.clone()),
             lama_model: None,
             normal_model: None,
+            depth_model: None,
             embeddings: None,
             depth_map: None,
         });
@@ -753,6 +807,7 @@ pub async fn get_or_init_lama_model(
             clip_models: None,
             lama_model: Some(lama_model.clone()),
             normal_model: None,
+            depth_model: None,
             embeddings: None,
             depth_map: None,
         });
@@ -814,6 +869,7 @@ pub async fn get_or_init_normal_model(
             clip_models: None,
             lama_model: None,
             normal_model: Some(normal_model.clone()),
+            depth_model: None,
             embeddings: None,
             depth_map: None,
         });
