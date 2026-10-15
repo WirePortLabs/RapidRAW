@@ -1889,6 +1889,13 @@
         "tonemapperOverride": "Sobreescriptura global del mapejador de tons",
         "tonemapperOverrideDesc": "Força un mapejador de tons específic globalment per a totes les imatges, amagant l'interruptor del mapejador del tauler d'ajustaments."
       },
+      "depthInference": "Rendiment de profunditat amb IA local",
+      "depthInferenceDesc": "Tria com la màscara de profunditat local utilitza els fils de CPU. Automàtic reserva un nucli i limita a 8 fils; Àgil en fa servir com a màxim 2; Rendiment en pot fer servir fins a 16. S'aplica quan es torni a carregar el model de profunditat. També funciona només amb CPU.",
+      "depthInferenceModes": {
+        "auto": "Automàtic (recomanat)",
+        "responsive": "Mantén el sistema àgil",
+        "performance": "Màxim rendiment de CPU"
+      },
       "previewRes": "Resolució de la vista prèvia",
       "previewResDesc": "Determina la resolució màxima de la vista prèvia. Valors inferiors milloren significativament el rendiment.",
       "previewStrategy": "Estratègia de renderització de la vista prèvia",
