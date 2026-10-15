@@ -9,7 +9,8 @@ use crate::ai_connector;
 use crate::ai_processing::{
     AiDepthMaskParameters, AiForegroundMaskParameters, AiSkyMaskParameters,
     AiSubjectMaskParameters, CachedDepthMap, generate_image_embeddings, get_or_init_ai_models,
-    run_depth_anything_model, run_sam_decoder, run_sky_seg_model, run_u2netp_model,
+    get_or_init_depth_model, run_depth_anything_model, run_sam_decoder, run_sky_seg_model,
+    run_u2netp_model,
 };
 use crate::app_settings::load_settings;
 use crate::app_state::{AiTaskGuard, AppState};
@@ -167,10 +168,6 @@ pub async fn generate_ai_depth_mask(
         return Err("Task cancelled".to_string());
     }
 
-    let models = get_or_init_ai_models(&app_handle, &state.ai_state, &state.ai_init_lock)
-        .await
-        .map_err(|e| e.to_string())?;
-
     let path_hash = {
         let mut hasher = blake3::Hasher::new();
         hasher.update(path.as_bytes());
@@ -204,9 +201,12 @@ pub async fn generate_ai_depth_mask(
                     return Err("Task cancelled".to_string());
                 }
 
-                let depth_img =
-                    run_depth_anything_model(warped_image.as_ref(), &models.depth_anything)
+                let depth_model =
+                    get_or_init_depth_model(&app_handle, &state.ai_state, &state.ai_init_lock)
+                        .await
                         .map_err(|e| e.to_string())?;
+                let depth_img = run_depth_anything_model(warped_image.as_ref(), &depth_model)
+                    .map_err(|e| e.to_string())?;
 
                 let new_cache = CachedDepthMap {
                     path_hash: path_hash.clone(),
@@ -227,7 +227,11 @@ pub async fn generate_ai_depth_mask(
                 return Err("Task cancelled".to_string());
             }
 
-            let depth_img = run_depth_anything_model(warped_image.as_ref(), &models.depth_anything)
+            let depth_model =
+                get_or_init_depth_model(&app_handle, &state.ai_state, &state.ai_init_lock)
+                    .await
+                    .map_err(|e| e.to_string())?;
+            let depth_img = run_depth_anything_model(warped_image.as_ref(), &depth_model)
                 .map_err(|e| e.to_string())?;
 
             let new_cache = CachedDepthMap {
@@ -275,7 +279,7 @@ pub async fn generate_full_image_depth_map(
     state: tauri::State<'_, AppState>,
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
-    let models = crate::ai_processing::get_or_init_ai_models(
+    let depth_model = crate::ai_processing::get_or_init_depth_model(
         &app_handle,
         &state.ai_state,
         &state.ai_init_lock,
@@ -289,7 +293,7 @@ pub async fn generate_full_image_depth_map(
 
     let depth_img = crate::ai_processing::run_depth_anything_model(
         source_image.as_ref(),
-        &models.depth_anything,
+        &depth_model,
     )
     .map_err(|e| e.to_string())?;
 
