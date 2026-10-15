@@ -1966,7 +1966,9 @@ export default function SettingsPanel({
                           onChange={(value: string) => handleProcessingSettingChange('depthInferenceMode', value)}
                           options={depthInferenceModeOptions}
                           value={
-                            depthInferenceModeOptions.some((option) => option.value === processingSettings.depthInferenceMode)
+                            depthInferenceModeOptions.some(
+                              (option) => option.value === processingSettings.depthInferenceMode,
+                            )
                               ? processingSettings.depthInferenceMode
                               : 'auto'
                           }
